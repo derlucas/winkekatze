@@ -1,18 +1,21 @@
 #include <Arduino.h>
 #include "InputDebounce.h"
 
-#define LED     13
-#define MOTOR_IN_1    6
-#define MOTOR_IN_2    5
-#define MOTOR_EN_A    3
-#define MOTOR_EN_B    A5
-#define SWITCH_FRONT    7
-#define SWITCH_BACK     8
-#define TICK_DELAY_MS   20
-#define BUTTON_DEBOUNCE_DELAY 5 // [ms]
+#define LED                     13
+#define MOTOR_IN_1              6
+#define MOTOR_IN_2              5
+#define MOTOR_EN_A              3
+#define MOTOR_EN_B              A5
+#define SWITCH_FRONT            7
+#define SWITCH_BACK             8
+#define TICK_DELAY_MS           200
+#define BUTTON_DEBOUNCE_DELAY   50
+#define SWITCH_TIMEOUT          10000
 
-#define DUTY_MIN    0
-#define DUTY_MAX    50      //TODO: figure out maximum sensible speed
+#define DUTY_MIN                0
+#define DUTY_MAX                12      //TODO: figure out maximum sensible speed
+
+#define DEBUG
 
 
 enum state {
@@ -27,12 +30,19 @@ enum direction {
     REVERSE,
     BRAKE
 } cur_direction = BRAKE;
+
+direction next_direction = FORWARD;
 byte cur_duty = 0;
 static InputDebounce input_front;
 static InputDebounce input_back;
+static long tick_millis;
+static long switch_millis;
 
 
 void setup() {
+
+    Serial.begin(115200);
+    Serial.println("\n\nhello\n\n");
 
     pinMode(LED, OUTPUT);
 
@@ -49,37 +59,66 @@ void setup() {
     digitalWrite(MOTOR_EN_A, HIGH);
     digitalWrite(MOTOR_EN_B, HIGH);
 
+
+    tick_millis = millis();
+    switch_millis = millis();
+
     // start slowly moving
+    cur_duty = 5;
+    cur_direction = FORWARD;
+    cur_state = MOVE;
 
 }
 
 
 void loop() {
 
-    static long tick_millis = millis();
+
     long now_millis = millis();
 
-    unsigned int front_on_time = input_front.process(now);
-    unsigned int back_on_time = input_back.process(now);
-
-
-    if(front_on_time) {
-        if(cur_state == MOVE && cur_direction == FORWARD) {
-            cur_state = RAMP_DOWN;
-        }
-    }
-    if(back_on_time) {
-        if(cur_state == MOVE && cur_direction == REVERSE) {
-            cur_state == RAMP_DOWN;
-        }
-    }
+    unsigned int front_on_time = input_front.process(now_millis);
+    unsigned int back_on_time = input_back.process(now_millis);
 
 
     if(now_millis - tick_millis > TICK_DELAY_MS) {
 
+        if(front_on_time) {
+#ifdef DEBUG
+            Serial.println("front switch");
+#endif
 
+            if((cur_state == MOVE || cur_state == RAMP_UP) && cur_direction == FORWARD) {
+                cur_state = RAMP_DOWN;
+            }
+            switch_millis = now_millis;
+        }
+        if(back_on_time) {
+#ifdef DEBUG
+            Serial.println("back switch");
+#endif
 
-        if(cur_state == RAMP_UP) {
+            if((cur_state == MOVE || cur_state == RAMP_UP) && cur_direction == REVERSE) {
+                cur_state = RAMP_DOWN;
+            }
+            switch_millis = now_millis;
+        }
+
+#ifdef DEBUG
+        Serial.print("state: ");
+        Serial.print(cur_state == IDLE ? "IDLE" : (cur_state == RAMP_UP ? "RAMP_UP" : (cur_state == RAMP_DOWN ? "RAMP_DOWN": "MOVE")));
+        Serial.print(" duty: ");
+        Serial.print(cur_duty);
+        Serial.print(" direction: ");
+        Serial.print(cur_direction == FORWARD ? "FORWARD" : (cur_direction == REVERSE ? "REVERSE" : "BRAKE"));
+        Serial.println("");
+#endif
+
+        if(cur_state == IDLE) {
+            if(next_direction != cur_direction) {
+                cur_direction = next_direction;
+                cur_state = RAMP_UP;
+            }
+        } else if(cur_state == RAMP_UP) {
             if(cur_duty < DUTY_MAX) {
                 cur_duty++;
             } else {
@@ -89,11 +128,11 @@ void loop() {
             if(cur_duty > DUTY_MIN) {
                 cur_duty--;
             } else {
-                cur_state = MOVE;
+                cur_state = IDLE;
+                next_direction = cur_direction == FORWARD ? REVERSE : FORWARD;
+                cur_direction == BRAKE;
             }
         }
-
-
 
 
         if(cur_direction == BRAKE) {
@@ -106,6 +145,17 @@ void loop() {
             analogWrite(MOTOR_IN_1, DUTY_MIN);
             analogWrite(MOTOR_IN_2, cur_duty);
         }
+
+
+        // check if switch has timedout
+        if(now_millis - switch_millis > SWITCH_TIMEOUT) {
+            Serial.println("Error, Switch timeout");
+            cur_state = IDLE;
+            cur_duty = DUTY_MIN;
+            cur_direction = BRAKE;
+            next_direction = BRAKE;
+        }
+
 
         tick_millis = now_millis;
     }
