@@ -2,19 +2,19 @@
 #include "InputDebounce.h"
 
 #define LED                     13
-#define MOTOR_IN_1              6
+#define MOTOR_IN_1              9
 #define MOTOR_IN_2              5
-#define MOTOR_EN_A              3
-#define MOTOR_EN_B              A5
-#define PIN_CURRENT             A1
-#define SWITCH_FRONT            7
-#define SWITCH_BACK             8
-#define TICK_DELAY_MS           200
+#define MOTOR_EN_A              2
+#define MOTOR_EN_B              A4
+#define PIN_CURRENT             A5
+#define SWITCH_FRONT            6
+#define SWITCH_BACK             7
+#define TICK_DELAY_MS           50
 #define BUTTON_DEBOUNCE_DELAY   50
-#define SWITCH_TIMEOUT          10000
+#define SWITCH_TIMEOUT          5000
 
 #define DUTY_MIN                0
-#define DUTY_MAX                12      //TODO: figure out maximum sensible speed
+#define DUTY_MAX                80      //TODO: figure out maximum sensible speed
 #define CURRENT_MAX             5000    // in mA
 
 #define DEBUG
@@ -72,8 +72,10 @@ void setup() {
     pinMode(MOTOR_EN_A, OUTPUT);
     pinMode(MOTOR_EN_B, OUTPUT);
 
-    input_front.setup(SWITCH_FRONT, BUTTON_DEBOUNCE_DELAY, InputDebounce::PIM_INT_PULL_UP_RES);
-    input_back.setup(SWITCH_BACK, BUTTON_DEBOUNCE_DELAY, InputDebounce::PIM_INT_PULL_UP_RES);
+    input_front.setup(SWITCH_FRONT, BUTTON_DEBOUNCE_DELAY,
+            InputDebounce::PIM_INT_PULL_UP_RES, 0, InputDebounce::ST_NORMALLY_CLOSED);
+    input_back.setup(SWITCH_BACK, BUTTON_DEBOUNCE_DELAY,
+            InputDebounce::PIM_INT_PULL_UP_RES, 0, InputDebounce::ST_NORMALLY_CLOSED);
 
     digitalWrite(MOTOR_IN_1, LOW);
     digitalWrite(MOTOR_IN_2, LOW);
@@ -85,9 +87,11 @@ void setup() {
     switch_millis = millis();
 
     // start slowly moving
-    cur_duty = 5;
+    cur_duty = 50;
     cur_direction = FORWARD;
     cur_state = MOVE;
+
+
 
 }
 
@@ -143,13 +147,13 @@ void loop() {
             }
         } else if(cur_state == RAMP_UP) {
             if(cur_duty < DUTY_MAX) {
-                cur_duty++;
+                cur_duty+=5;
             } else {
                 cur_state = MOVE;
             }
         } else if(cur_state == RAMP_DOWN) {
             if(cur_duty > DUTY_MIN) {
-                cur_duty--;
+                cur_duty-=5;
             } else {
                 cur_state = IDLE;
                 next_direction = cur_direction == FORWARD ? REVERSE : FORWARD;
