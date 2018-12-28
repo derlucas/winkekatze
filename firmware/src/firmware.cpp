@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "InputDebounce.h"
+#include <NeoPixelBus.h>
 
 #define LED                     13
 #define MOTOR_IN_1              9
@@ -9,24 +10,23 @@
 #define PIN_CURRENT             A5
 #define SWITCH_FRONT            6
 #define SWITCH_BACK             7
-#define TICK_DELAY_MS           50
-#define BUTTON_DEBOUNCE_DELAY   50
-#define SWITCH_TIMEOUT          5000
+#define TICK_DELAY_MS           30
+#define BUTTON_DEBOUNCE_DELAY   10
+#define SWITCH_TIMEOUT          4500
 
 #define DUTY_MIN                0
-#define DUTY_MAX                80      //TODO: figure out maximum sensible speed
-#define CURRENT_MAX             5000    // in mA
+#define DUTY_MAX                100
 
 #define DEBUG
 
 
 enum state {
     IDLE,
+    BOOT_FIND_SWITCHES,
     RAMP_UP,
     MOVE,
     RAMP_DOWN,
-    TIMEOUT,
-    OVERCURRENT,
+    TIMEOUT
 } cur_state = IDLE;
 
 enum direction {
@@ -37,28 +37,16 @@ enum direction {
 
 direction next_direction = FORWARD;
 byte cur_duty = 0;
-int16_t cur_current = 0; // in mA  10A = 10000
 static InputDebounce input_front;
 static InputDebounce input_back;
 static long tick_millis;
 static long switch_millis;
+NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> strip(50, 8);
+RgbColor red(255, 0, 0);
+RgbColor green(0, 255, 0);
+RgbColor blue(0, 0, 255);
+RgbColor white(10);
 
-int16_t sample_current_sensor() {
-    int16_t val;
-    long temp = 0;
-
-    for (int i = 0; i < 10; ++i) {
-        temp += analogRead(PIN_CURRENT);
-        delay(1);
-    }
-
-    temp /= 10;
-
-    // Allegro ACS712 ELC 30A = 66mV/A or 0,066mV per mA
-    //val = temp * (5.0 / 1023.0);
-
-    return val;
-}
 
 void setup() {
 
@@ -87,10 +75,16 @@ void setup() {
     switch_millis = millis();
 
     // start slowly moving
-    cur_duty = 50;
+    cur_duty = 10;
     cur_direction = FORWARD;
-    cur_state = MOVE;
+    cur_state = RAMP_UP;
 
+
+    strip.SetPixelColor(21, white);
+    strip.SetPixelColor(25, white);
+    strip.SetPixelColor(29, white);
+    strip.SetPixelColor(33, white);
+    strip.Show();
 
 
 }
@@ -117,6 +111,7 @@ void loop() {
             }
             switch_millis = now_millis;
         }
+
         if(back_on_time) {
 #ifdef DEBUG
             Serial.println("back switch");
@@ -132,7 +127,7 @@ void loop() {
         Serial.print("state: ");
         Serial.print(cur_state == IDLE ? "IDLE" : (cur_state == RAMP_UP ? "RAMP_UP" :
             (cur_state == RAMP_DOWN ? "RAMP_DOWN": (cur_state == MOVE ? "MOVE" :
-            (cur_state == TIMEOUT ? "TIMEOUT" : (cur_state == OVERCURRENT ? "OVERCURRENT" : "UNKNOWN"))))));
+            (cur_state == TIMEOUT ? "TIMEOUT" : "UNKNOWN")))));
         Serial.print(" duty: ");
         Serial.print(cur_duty);
         Serial.print(" direction: ");
@@ -145,43 +140,68 @@ void loop() {
                 cur_direction = next_direction;
                 cur_state = RAMP_UP;
             }
+            strip.SetPixelColor(1, RgbColor(0,0,0));
+            strip.Show();
         } else if(cur_state == RAMP_UP) {
-            if(cur_duty < DUTY_MAX) {
-                cur_duty+=5;
+            if (cur_duty < DUTY_MAX) {
+                cur_duty += 5;
             } else {
                 cur_state = MOVE;
             }
+            strip.SetPixelColor(1, RgbColor(0, 0, 10));
+            strip.Show();
+        } else if(cur_state == MOVE) {
+            strip.SetPixelColor(1, RgbColor(0, 10, 0));
+            strip.Show();
         } else if(cur_state == RAMP_DOWN) {
             if(cur_duty > DUTY_MIN) {
-                cur_duty-=5;
+                cur_duty-=10;
             } else {
                 cur_state = IDLE;
                 next_direction = cur_direction == FORWARD ? REVERSE : FORWARD;
-                cur_direction == BRAKE;
+                cur_direction = BRAKE;
             }
+            strip.SetPixelColor(1, RgbColor(10,0,0));
+            strip.Show();
+        } else if(cur_state == TIMEOUT) {
+            strip.SetPixelColor(1, RgbColor(10,0,0));
+            strip.SetPixelColor(21, red);
+            strip.SetPixelColor(25, red);
+            strip.SetPixelColor(29, red);
+            strip.SetPixelColor(33, red);
+            strip.Show();
         }
 
 
         if(cur_direction == BRAKE) {
             analogWrite(MOTOR_IN_1, DUTY_MIN);
             analogWrite(MOTOR_IN_2, DUTY_MIN);
+            strip.SetPixelColor(2, RgbColor(10,0,0));
+            strip.Show();
         } else if(cur_direction == FORWARD) {
             analogWrite(MOTOR_IN_1, cur_duty);
             analogWrite(MOTOR_IN_2, DUTY_MIN);
+            strip.SetPixelColor(2, RgbColor(0,10,0));
+            strip.Show();
         } else if(cur_direction == REVERSE) {
             analogWrite(MOTOR_IN_1, DUTY_MIN);
             analogWrite(MOTOR_IN_2, cur_duty);
+            strip.SetPixelColor(2, RgbColor(0,0,10));
+            strip.Show();
         }
+
+
 
 
         // check if switch has timedout
         if(now_millis - switch_millis > SWITCH_TIMEOUT) {
-            Serial.println("Error, Switch timeout");
-            cur_state = IDLE;
+            cur_state = TIMEOUT;
             cur_duty = DUTY_MIN;
             cur_direction = BRAKE;
             next_direction = BRAKE;
         }
+
+
 
 
         tick_millis = now_millis;
