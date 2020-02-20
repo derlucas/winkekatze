@@ -56,6 +56,36 @@ RgbColor white(10);
 int wavesleft; //to soft disable waving
 bool wavecenterflag=false;
 
+void setPwmFrequency(int pin, int divisor) {
+  byte mode;
+  if(pin == 5 || pin == 6 || pin == 9 || pin == 10) {
+    switch(divisor) {
+      case 1: mode = 0x01; break;
+      case 8: mode = 0x02; break;
+      case 64: mode = 0x03; break;
+      case 256: mode = 0x04; break;
+      case 1024: mode = 0x05; break;
+      default: return;
+    }
+    if(pin == 5 || pin == 6) {
+      TCCR0B = TCCR0B & 0b11111000 | mode;
+    } else {
+      TCCR1B = TCCR1B & 0b11111000 | mode;
+    }
+  } else if(pin == 3 || pin == 11) {
+    switch(divisor) {
+      case 1: mode = 0x01; break;
+      case 8: mode = 0x02; break;
+      case 32: mode = 0x03; break;
+      case 64: mode = 0x04; break;
+      case 128: mode = 0x05; break;
+      case 256: mode = 0x06; break;
+      case 1024: mode = 0x07; break;
+      default: return;
+    }
+    TCCR2B = TCCR2B & 0b11111000 | mode;
+  }
+}
 
 void setup() {
 
@@ -66,6 +96,16 @@ void setup() {
 
     pinMode(MOTOR_IN_1, OUTPUT);
     pinMode(MOTOR_IN_2, OUTPUT);
+    // Set pin 9's PWM frequency to 3906 Hz (31250/8 = 3906)
+    // Note that the base frequency for pins 3, 9, 10, and 11 is 31250 Hz
+    //setPwmFrequency(MOTOR_IN_1, 8); //MOTOR_IN_1 is set to pin 9. default frequency=490
+
+    // Set pin 6's PWM frequency to 62500 Hz (62500/1 = 62500)
+    // Note that the base frequency for pins 5 and 6 is 62500 Hz
+    //setPwmFrequency(MOTOR_IN_2, 8); //MOTOR_IN_2 is set to pin 5. default frequency=980
+
+    //WARNING: Setting the frequency higher than default is not working (motor stops)
+
     pinMode(MOTOR_EN_A, OUTPUT);
     pinMode(MOTOR_EN_B, OUTPUT);
 
@@ -299,3 +339,4 @@ void loop() {
     }
 
 }
+
