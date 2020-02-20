@@ -8,14 +8,17 @@
 #define MOTOR_EN_A              2
 #define MOTOR_EN_B              A4
 #define PIN_CURRENT             A5
-#define SWITCH_FRONT            6
-#define SWITCH_BACK             7
+#define SWITCH_FRONT            7
+#define SWITCH_BACK             6
 #define TICK_DELAY_MS           30
 #define BUTTON_DEBOUNCE_DELAY   10
-#define SWITCH_TIMEOUT          4500
+#define SWITCH_TIMEOUT          4500 //enter error mode if no end switch pressed after this time
+#define CENTERMOVE_TIME         1000 //time from last switch to reacht center position
 
 #define DUTY_MIN                0
 #define DUTY_MAX                100
+
+#define PIN_BUTTON				10
 
 #define DEBUG
 
@@ -26,7 +29,8 @@ enum state {
     RAMP_UP,
     MOVE,
     RAMP_DOWN,
-    TIMEOUT
+	TIMEOUT,
+	STOP
 } cur_state = IDLE;
 
 enum direction {
@@ -36,9 +40,11 @@ enum direction {
 } cur_direction = BRAKE;
 
 direction next_direction = FORWARD;
-byte cur_duty = 0;
+int cur_duty = 0;
 static InputDebounce input_front;
 static InputDebounce input_back;
+static InputDebounce input_button;
+bool button_down=false;
 static long tick_millis;
 static long switch_millis;
 NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> strip(50, 8);
@@ -46,6 +52,9 @@ RgbColor red(255, 0, 0);
 RgbColor green(0, 255, 0);
 RgbColor blue(0, 0, 255);
 RgbColor white(10);
+
+int wavesleft; //to soft disable waving
+bool wavecenterflag=false;
 
 
 void setup() {
@@ -70,14 +79,25 @@ void setup() {
     digitalWrite(MOTOR_EN_A, HIGH);
     digitalWrite(MOTOR_EN_B, HIGH);
 
+	input_button.setup(PIN_BUTTON, BUTTON_DEBOUNCE_DELAY,
+		InputDebounce::PIM_INT_PULL_UP_RES, 0, InputDebounce::ST_NORMALLY_OPEN);
+
+
 
     tick_millis = millis();
     switch_millis = millis();
 
     // start slowly moving
-    cur_duty = 10;
+    /*cur_duty = 10;
     cur_direction = FORWARD;
     cur_state = RAMP_UP;
+    */
+
+    // start non moving. expecting arm in center position
+    cur_duty = 0;
+    cur_direction = FORWARD;
+    cur_state = STOP;
+    wavesleft=0;
 
 
     strip.SetPixelColor(21, white);
@@ -96,7 +116,8 @@ void loop() {
     long now_millis = millis();
 
     unsigned int front_on_time = input_front.process(now_millis);
-    unsigned int back_on_time = input_back.process(now_millis);
+	unsigned int back_on_time = input_back.process(now_millis);
+	unsigned int button_on_time = input_button.process(now_millis);
 
 
     if(now_millis - tick_millis > TICK_DELAY_MS) {
@@ -123,15 +144,40 @@ void loop() {
             switch_millis = now_millis;
         }
 
+		if (button_on_time) { //user button pressed
+
+			
+            if (!button_down) { //pressed
+                button_down=true;
+                wavesleft+=2; //start waving (forth and back)
+#ifdef DEBUG
+                Serial.println("user button");
+#endif
+            }
+		}else{
+            button_down=false;
+        }
+
+        if (button_on_time > 1000) { //button held down
+#ifdef DEBUG
+                Serial.println("user button hold. stop waving");
+#endif
+            wavesleft = 0;
+        }
+
 #ifdef DEBUG
         Serial.print("state: ");
         Serial.print(cur_state == IDLE ? "IDLE" : (cur_state == RAMP_UP ? "RAMP_UP" :
             (cur_state == RAMP_DOWN ? "RAMP_DOWN": (cur_state == MOVE ? "MOVE" :
-            (cur_state == TIMEOUT ? "TIMEOUT" : "UNKNOWN")))));
+            (cur_state == TIMEOUT ? "TIMEOUT" : (cur_state == STOP ? "STOP" : "UNKNOWN"))))));
         Serial.print(" duty: ");
         Serial.print(cur_duty);
         Serial.print(" direction: ");
         Serial.print(cur_direction == FORWARD ? "FORWARD" : (cur_direction == REVERSE ? "REVERSE" : "BRAKE"));
+        Serial.print(" next_direction: ");
+        Serial.print(next_direction == FORWARD ? "FORWARD" : (next_direction == REVERSE ? "REVERSE" : "BRAKE"));
+        Serial.print(" wavesleft: ");
+        Serial.print(wavesleft);
         Serial.println("");
 #endif
 
@@ -146,6 +192,7 @@ void loop() {
             if (cur_duty < DUTY_MAX) {
                 cur_duty += 5;
             } else {
+                cur_duty = DUTY_MAX;
                 cur_state = MOVE;
             }
             strip.SetPixelColor(1, RgbColor(0, 0, 10));
@@ -153,10 +200,30 @@ void loop() {
         } else if(cur_state == MOVE) {
             strip.SetPixelColor(1, RgbColor(0, 10, 0));
             strip.Show();
+            if(now_millis - switch_millis > CENTERMOVE_TIME) { //time from last switch to reach center position
+                if (!wavecenterflag) {
+                    wavecenterflag=true; //only do this if once every wave
+                    wavesleft -=1;
+    #ifdef DEBUG
+                    Serial.println("Wave Centerpos");
+    #endif
+                    
+                    if (wavesleft<=0) { //needz stop wavin'
+                        cur_state = STOP;
+    #ifdef DEBUG
+                    Serial.println("No waves left. Stopping.");
+    #endif
+                    }
+                }
+            }else{
+                wavecenterflag=false; //reset flag
+            }
+            
         } else if(cur_state == RAMP_DOWN) {
             if(cur_duty > DUTY_MIN) {
                 cur_duty-=10;
             } else {
+                cur_duty=DUTY_MIN;
                 cur_state = IDLE;
                 next_direction = cur_direction == FORWARD ? REVERSE : FORWARD;
                 cur_direction = BRAKE;
@@ -170,7 +237,28 @@ void loop() {
             strip.SetPixelColor(29, red);
             strip.SetPixelColor(33, red);
             strip.Show();
-        }
+		} else if(cur_state == STOP) {
+            if(cur_duty > DUTY_MIN) {
+                cur_duty-=10; //stop slowly
+            } else if (cur_direction!=BRAKE){
+                cur_duty=0;
+                next_direction = cur_direction; //save last direction before braking
+                cur_direction = BRAKE;
+            }
+            if (wavesleft>0) { //can start waving again
+#ifdef DEBUG
+                Serial.println("Start waving.");
+#endif
+                if (next_direction == BRAKE) { //in case it hasnt moved before
+                    next_direction = FORWARD;
+                }
+                cur_direction = next_direction; //start in the same direction
+                
+                cur_state = RAMP_UP;
+                switch_millis = now_millis - CENTERMOVE_TIME; //for timeout check. subtract time to move to center
+                wavecenterflag=true; //do not stop at center position for this cycle
+            }
+		}
 
 
         if(cur_direction == BRAKE) {
@@ -179,13 +267,13 @@ void loop() {
             strip.SetPixelColor(2, RgbColor(10,0,0));
             strip.Show();
         } else if(cur_direction == FORWARD) {
-            analogWrite(MOTOR_IN_1, cur_duty);
+            analogWrite(MOTOR_IN_1, (byte)cur_duty);
             analogWrite(MOTOR_IN_2, DUTY_MIN);
             strip.SetPixelColor(2, RgbColor(0,10,0));
             strip.Show();
         } else if(cur_direction == REVERSE) {
             analogWrite(MOTOR_IN_1, DUTY_MIN);
-            analogWrite(MOTOR_IN_2, cur_duty);
+            analogWrite(MOTOR_IN_2, (byte)cur_duty);
             strip.SetPixelColor(2, RgbColor(0,0,10));
             strip.Show();
         }
@@ -194,11 +282,14 @@ void loop() {
 
 
         // check if switch has timedout
-        if(now_millis - switch_millis > SWITCH_TIMEOUT) {
-            cur_state = TIMEOUT;
-            cur_duty = DUTY_MIN;
-            cur_direction = BRAKE;
-            next_direction = BRAKE;
+        if (cur_state != STOP) 
+        {
+            if(now_millis - switch_millis > SWITCH_TIMEOUT) {
+                cur_state = TIMEOUT;
+                cur_duty = DUTY_MIN;
+                cur_direction = BRAKE;
+                next_direction = BRAKE;
+            }
         }
 
 
