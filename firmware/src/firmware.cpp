@@ -20,7 +20,7 @@
 
 #define PIN_BUTTON				10
 
-#define DEBUG
+//#define DEBUG
 
 
 enum state {
@@ -47,11 +47,21 @@ static InputDebounce input_button;
 bool button_down=false;
 static long tick_millis;
 static long switch_millis;
-NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> strip(50, 8);
+#define STRIPPIN 8
+#define NUM_LEDS 59
+NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> strip(NUM_LEDS, STRIPPIN);
 RgbColor red(255, 0, 0);
 RgbColor green(0, 255, 0);
 RgbColor blue(0, 0, 255);
 RgbColor white(10);
+RgbColor black(0);
+unsigned long strip_tick_millis;
+#define STRIP_TICK_DELAY_MS 100 //refresh delay for led strip
+#define STRIPMODE_OFF 0
+#define STRIPMODE_WHITE 1
+#define STRIPMODE_RED 2
+uint8_t stripmode = STRIPMODE_RED; //mode for led strip
+
 
 int wavesleft; //to soft disable waving
 bool wavecenterflag=false;
@@ -138,21 +148,10 @@ void setup() {
     cur_direction = FORWARD;
     cur_state = STOP;
     wavesleft=0;
-
-
-    strip.SetPixelColor(21, white);
-    strip.SetPixelColor(25, white);
-    strip.SetPixelColor(29, white);
-    strip.SetPixelColor(33, white);
-    strip.Show();
-
-
 }
 
 
 void loop() {
-
-
     long now_millis = millis();
 
     unsigned int front_on_time = input_front.process(now_millis);
@@ -226,8 +225,6 @@ void loop() {
                 cur_direction = next_direction;
                 cur_state = RAMP_UP;
             }
-            strip.SetPixelColor(1, RgbColor(0,0,0));
-            strip.Show();
         } else if(cur_state == RAMP_UP) {
             if (cur_duty < DUTY_MAX) {
                 cur_duty += 5;
@@ -235,11 +232,7 @@ void loop() {
                 cur_duty = DUTY_MAX;
                 cur_state = MOVE;
             }
-            strip.SetPixelColor(1, RgbColor(0, 0, 10));
-            strip.Show();
         } else if(cur_state == MOVE) {
-            strip.SetPixelColor(1, RgbColor(0, 10, 0));
-            strip.Show();
             if(now_millis - switch_millis > CENTERMOVE_TIME) { //time from last switch to reach center position
                 if (!wavecenterflag) {
                     wavecenterflag=true; //only do this if once every wave
@@ -268,16 +261,7 @@ void loop() {
                 next_direction = cur_direction == FORWARD ? REVERSE : FORWARD;
                 cur_direction = BRAKE;
             }
-            strip.SetPixelColor(1, RgbColor(10,0,0));
-            strip.Show();
-        } else if(cur_state == TIMEOUT) {
-            strip.SetPixelColor(1, RgbColor(10,0,0));
-            strip.SetPixelColor(21, red);
-            strip.SetPixelColor(25, red);
-            strip.SetPixelColor(29, red);
-            strip.SetPixelColor(33, red);
-            strip.Show();
-		} else if(cur_state == STOP) {
+        } else if(cur_state == STOP) {
             if(cur_duty > DUTY_MIN) {
                 cur_duty-=10; //stop slowly
             } else if (cur_direction!=BRAKE){
@@ -304,18 +288,12 @@ void loop() {
         if(cur_direction == BRAKE) {
             analogWrite(MOTOR_IN_1, DUTY_MIN);
             analogWrite(MOTOR_IN_2, DUTY_MIN);
-            strip.SetPixelColor(2, RgbColor(10,0,0));
-            strip.Show();
         } else if(cur_direction == FORWARD) {
             analogWrite(MOTOR_IN_1, (byte)cur_duty);
             analogWrite(MOTOR_IN_2, DUTY_MIN);
-            strip.SetPixelColor(2, RgbColor(0,10,0));
-            strip.Show();
         } else if(cur_direction == REVERSE) {
             analogWrite(MOTOR_IN_1, DUTY_MIN);
             analogWrite(MOTOR_IN_2, (byte)cur_duty);
-            strip.SetPixelColor(2, RgbColor(0,0,10));
-            strip.Show();
         }
 
 
@@ -336,6 +314,63 @@ void loop() {
 
 
         tick_millis = now_millis;
+    }
+
+    if(now_millis - strip_tick_millis > STRIP_TICK_DELAY_MS) { //led strip update
+        
+        if (cur_state != TIMEOUT) { //no error
+            switch (stripmode) {
+                case STRIPMODE_OFF:
+                for (uint16_t i=3;i<NUM_LEDS;i++) {
+                    strip.SetPixelColor(i, black);
+                }
+                case STRIPMODE_WHITE:
+                strip.SetPixelColor(21, white);
+                strip.SetPixelColor(25, white);
+                strip.SetPixelColor(29, white);
+                strip.SetPixelColor(33, white);
+                break;
+                case STRIPMODE_RED:
+                #define REDMINCOLOR 10
+                #define REDMAXCOLOR 200
+                for (uint16_t i=3;i<NUM_LEDS;i++) {
+                    uint8_t _red=REDMINCOLOR+(  (sin(now_millis/1000.0+i/10.0)+1)/2.0*(REDMAXCOLOR-REDMINCOLOR)   );
+                    strip.SetPixelColor(i, RgbColor(_red,0,0));
+                }
+                break;
+            }
+        }
+
+
+        if(cur_state == TIMEOUT) {
+            strip.SetPixelColor(1, RgbColor(10,0,0));
+            strip.SetPixelColor(21, red);
+            strip.SetPixelColor(25, red);
+            strip.SetPixelColor(29, red);
+            strip.SetPixelColor(33, red);
+        }else if(cur_state == RAMP_DOWN) {
+            strip.SetPixelColor(1, RgbColor(10,0,0));
+        }else if(cur_state == MOVE) {
+            strip.SetPixelColor(1, RgbColor(0, 10, 0));
+        }else if(cur_state == RAMP_UP) {
+            strip.SetPixelColor(1, RgbColor(0, 0, 10));
+        }if(cur_state == IDLE) {
+            strip.SetPixelColor(1, RgbColor(0,0,0));
+        }
+
+        if(cur_direction == BRAKE) {
+            strip.SetPixelColor(2, RgbColor(10,0,0));
+        } else if(cur_direction == FORWARD) {
+            strip.SetPixelColor(2, RgbColor(0,10,0));
+        } else if(cur_direction == REVERSE) {
+            strip.SetPixelColor(2, RgbColor(0,0,10));
+        }
+
+        
+
+        strip.Show();
+
+        strip_tick_millis=now_millis;
     }
 
 }
